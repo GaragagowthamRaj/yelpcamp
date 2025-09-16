@@ -1,54 +1,60 @@
+// ----------------- Environment -----------------
 if (process.env.NODE_ENV !== "production") {
     require('dotenv').config();
 }
 
+// ----------------- Imports -----------------
 const express = require('express');
-const app = express();
 const path = require('path');
 const mongoose = require("mongoose");
 const methodOverride = require('method-override');
 const ejsMate = require('ejs-mate');
-const ExpressError = require('./utils/ExpressError');
 const session = require("express-session");
 const MongoStore = require('connect-mongo');
 const flash = require("connect-flash");
 const passport = require('passport');
 const LocalStrategy = require("passport-local").Strategy;
-const User = require("./models/user");
 const helmet = require('helmet');
-const sanitizeV5 = require('./utils/mongoSanitizeV5'); // keep import here
 
-// Routers
+const ExpressError = require('./utils/ExpressError');
+const User = require("./models/user");
+const sanitizeV5 = require('./utils/mongoSanitizeV5'); // sanitize middleware
+
+// ----------------- Routers -----------------
 const userRoutes = require('./router/users');
 const campgroundRoutes = require('./router/campgrounds');
 const reviewRoutes = require('./router/reviews');
 
-// ----------------- DB connection -----------------
-const dbUrl = process.env.DB_URL || 'mongodb://127.0.0.1:27017/yelp-camp';
-
-mongoose.connect(dbUrl)
-    .then(() => console.log("MongoDB Connected"))
-    .catch(err => console.log(err));
+// ----------------- App Setup -----------------
+const app = express();
 
 app.engine('ejs', ejsMate);
 app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
 
-// ----------------- Middleware -----------------
 app.use(express.urlencoded({ extended: true }));
+app.use(express.json());
 app.use(methodOverride('_method'));
 app.use(express.static(path.join(__dirname,'public')));
 
-// sanitize queries & body before anything else touches DB
+// ----------------- DB Connection -----------------
+const dbUrl = process.env.DB_URL || 'mongodb://127.0.0.1:27017/yelp-camp';
+
+mongoose.connect(dbUrl, {
+    useNewUrlParser: true,
+    useUnifiedTopology: true
+})
+.then(() => console.log("MongoDB Connected"))
+.catch(err => console.error("MongoDB Connection Error:", err));
+
+// ----------------- Data Sanitization -----------------
 app.use(sanitizeV5({ replaceWith: '_' }));
 
 // ----------------- Session & Flash -----------------
 const store = MongoStore.create({
     mongoUrl: dbUrl,
     touchAfter: 24 * 60 * 60,
-    crypto: {
-        secret: "thisshouldbeabettersecret"
-    }
+    crypto: { secret: process.env.SESSION_SECRET || "thisshouldbeabettersecret" }
 });
 
 store.on("error", (e) => {
@@ -58,12 +64,12 @@ store.on("error", (e) => {
 const sessionConfig = {
     store,
     name: 'session',
-    secret: "thisshouldbeabettersecret",
+    secret: process.env.SESSION_SECRET || "thisshouldbeabettersecret",
     resave: false,
     saveUninitialized: true,
     cookie: {
         httpOnly: true,
-        maxAge: 1000 * 60 * 60 * 24,
+        maxAge: 1000 * 60 * 60 * 24, // 1 day
         expires: new Date(Date.now() + 1000 * 60 * 60 * 24)
     }
 };
@@ -72,7 +78,7 @@ app.use(session(sessionConfig));
 app.use(flash());
 app.use(helmet());
 
-// ----------------- CSP -----------------
+// ----------------- Content Security Policy -----------------
 const scriptSrcUrls = [
     "https://stackpath.bootstrapcdn.com/",
     "https://kit.fontawesome.com/",
@@ -140,7 +146,7 @@ app.get('/', (req, res) => {
     res.render('home');
 });
 
-// ----------------- 404 -----------------
+// ----------------- 404 Handler -----------------
 app.all(/.*/, (req, res, next) => {
     next(new ExpressError('Page Not Found', 404));
 });
@@ -152,6 +158,6 @@ app.use((err, req, res, next) => {
     res.status(statusCode).render('error', { err });
 });
 
-app.listen(3000, () => {
-    console.log("Serving on port 3000");
-});
+// ----------------- Server -----------------
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`Serving on port ${PORT}`));
